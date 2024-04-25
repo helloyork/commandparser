@@ -1,7 +1,7 @@
 
 import { z } from "zod";
 
-import { BaseArgType } from "./constructors";
+import { ArgTypeConstructor, BaseArgType, BaseArgTypeConstructor, TYPES } from "./constructors";
 import { Types } from "./Types";
 
 // =========================================================
@@ -10,13 +10,15 @@ import { Types } from "./Types";
 // 
 // =========================================================
 
-
-
-interface Arg {
+export type ArgType = {
+    construct: () => BaseArgTypeConstructor,
+    constructor: ArgTypeConstructor,
+};
+export interface Arg {
     name: string;
     description?: string;
     required: boolean;
-    type: BaseArgType;
+    type: ArgType;
     onRequestCompletion?: (value: any) => any;
 }
 
@@ -53,7 +55,7 @@ const CommandOptionsSchema = z.object({
     args: z.array(ArgOptionsSchema),
 });
 
-type CommandOptionConfig = {[key: string]: CommandOptions};
+type CommandOptionConfig = { [key: string]: CommandOptions };
 
 class Options {
     static Types = Types;

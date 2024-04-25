@@ -1,27 +1,53 @@
-import { BaseArgType, Constructors } from "./constructors";
+import { ArgType } from "./command";
+import { BaseArgType, Constructors, EnumArgTypeValues, TYPES } from "./constructors";
 
-
+type ArgTypeConstructor = (...arg: any[]) => ArgType;
 export const Types = {
-    STRING: Constructors.STRING,
-    NUMBER: Constructors.NUMBER,
-    FLOAT: Constructors.FLOAT,
-    INT: Constructors.INT,
-    BOOLEAN: Constructors.BOOLEAN,
-
-    DICT: function (keyType: BaseArgType, valueType: BaseArgType) {
-        return function () {
-            return new Constructors.DICT(keyType, valueType);
-        };
+    STRING: {
+        constructor: Constructors.STRING,
+        construct: () => new Constructors.STRING()
+    },
+    NUMBER: {
+        constructor: Constructors.NUMBER,
+        construct: () => new Constructors.NUMBER()
+    },
+    FLOAT: {
+        constructor: Constructors.FLOAT,
+        construct: () => new Constructors.FLOAT()
+    },
+    INT: {
+        constructor: Constructors.INT,
+        construct: () => new Constructors.INT()
+    },
+    BOOLEAN: {
+        constructor: Constructors.BOOLEAN,
+        construct: () => new Constructors.BOOLEAN()
     },
 
-    ARRAY: function (...valueType: BaseArgType[]) {
-        return function () {
-            return new Constructors.ARRAY(valueType);
-        };
+    DICT: function (keyType: ArgType, valueType: ArgType) {
+        return {
+            constructor: Constructors.DICT,
+            construct: () => new Constructors.DICT(keyType.construct(), valueType.construct())
+        }
     },
-    SET: function (...valueType: BaseArgType[]) {
-        return function () {
-            return new Constructors.SET(valueType);
-        };
+
+    ARRAY: function (...valueType: ArgType[]) {
+        return {
+            constructor: Constructors.ARRAY,
+            construct: () => new Constructors.ARRAY(valueType.map(v => v.construct()))
+        }
+    },
+    SET: function (...valueType: ArgType[]) {
+        return {
+            constructor: Constructors.SET,
+            construct: () => new Constructors.SET(valueType.map(v => v.construct()))
+        }
+    },
+
+    ENUM: function (value: EnumArgTypeValues<any>) {
+        return {
+            constructor: Constructors.ENUM,
+            construct: () => new Constructors.ENUM(value)
+        }
     }
 };

@@ -1,8 +1,11 @@
+import { Types } from "../Types";
 import { ArgOptions, CommandOptions } from "../command";
-import { ArgTypeConstructorMap, Constructors } from "../constructors";
+import { ArgTypeConstructorMap, BaseArgType, Constructors, TYPES } from "../constructors";
+import { CycleTracker } from "../utils";
 import { ParseError } from "./errors";
 
-enum TokenType {
+export enum TokenType {
+    space = 'space',
     operator = 'operator',
     string = 'string',
     number = 'number',
@@ -10,41 +13,37 @@ enum TokenType {
     literal = 'literal',
 }
 type TokenValue = {
+    'space': string;
     'operator': string;
     'string': string;
     'number': number;
     'boolean': boolean;
     'literal': string;
 }
-type Token<T extends TokenType> = {
+export type Token<T extends TokenType> = {
     type: T;
     value: TokenValue[T];
 }
 
+enum NodeType {
+    root = 'root',
+    command = 'command',
+    arg = 'arg',
+}
+
 interface ParserConfig {
     maxCycles: number;
-}
-
-
-class CycleTracker {
-    private cycles: number = 0;
-    private maxCycles: number;
-    constructor(maxCycles: number) {
-        this.maxCycles = maxCycles;
-    }
-    next(callback?: () => void) {
-        this.cycles++;
-        if (this.cycles > this.maxCycles) {
-            if (callback) callback();
-            throw new Error('Cycle limit exceeded');
-        }
+    overwrites: {
+        [key: string]: string;
     }
 }
+
 
 class Parser {
-    static operators = ['+', '-', '*', '/', '%', '^', '(', ')', '[', ']', '{', '}', '<', '>', '=', '!', '&', '|', '~', '?', ':', ';', ',', '\\', '@', '#', '$', '`', '\''];
+    static operators = ['(', ')', '[', ']', '{', '}', ':'];
     static defaultConfig: ParserConfig = {
-        maxCycles: 10000
+        maxCycles: 10000,
+        overwrites: {}
     }
     commandOptions: CommandOptions;
     argOptions: ArgOptions[];
@@ -62,13 +61,87 @@ class Parser {
     }
     fullParse() {
     }
-    lexer(input: string) {
+    _parseArg(tokens: Token<TokenType>[], expected: ArgOptions) {
+        let _name = tokens.shift(), _this = this;
+        if (!_name) {
+            throw new Error('No tokens provided');
+        }
+        let name = (new Constructors.STRING()).convert(_name, TYPES.STRING);
+
+        let current = 0, expectedArgs = expected.args, output: BaseArgType[] = [], catchedAll: Token<TokenType>[] = [];
+        const state = {
+            createCycleTracker(): CycleTracker {
+                return new CycleTracker(_this.config.maxCycles);
+            },
+            getCurrentToken(): Token<TokenType> | undefined {
+                return tokens[current];
+            },
+            getToken(offset: number = 0): Token<TokenType> | undefined {
+                return tokens[current + offset];
+            },
+            is(token: { type: TokenType, value: string }): boolean {
+                let t = tokens[current];
+                return t?.type === token.type && t?.value === token.value;
+            },
+            __tokens: tokens,
+        }
+        const utils = {
+            next(num: number = 1) {
+                current += num;
+                return utils;
+            }
+        }
+
+        let _cycleTracker = state.createCycleTracker();
+        while (expectedArgs.length) {
+            _cycleTracker.next(() => console.log(`Cycle limit exceeded: ${tokens.slice(current - 5, current + 5)}\n current index: ${current}`));
+
+            let arg = expectedArgs.shift()!, constructor = arg?.type || Constructors.STRING;
+            if (!state.getCurrentToken()) {
+                if (arg.required) throw new Error('Unexpected end of input');
+                break;
+            }
+
+            let type = constructor.construct().parse(state, utils, arg.required, arg.type.constructor.TYPE);
+            output.push(type);
+        }
+        if (!expected.allowExcess && state.getCurrentToken()) {
+            throw new Error('Excess tokens');
+        }
+        if (expected.catchAll) {
+            while (state.getCurrentToken()) {
+                catchedAll.push(state.getCurrentToken()!);
+                utils.next();
+            }
+        }
+
+        return {
+            name,
+            args: output,
+            catchedAll
+        }
+    }
+    _parseCommand(tokens: Token<TokenType>[]) {
+        let res = [], options = [...this.argOptions];
+        for (let arg of options) {
+            try {
+                res.push(this._parseArg([...tokens], arg));
+            } catch (e) {
+                // console.error(e);
+                continue;
+            }
+        }
+        return res;
+    }
+    _parse(input: string) {
+    }
+    _lexer(input: string) {
         const _this = this;
         let tokens: Token<TokenType>[] = [], current = 0;
 
         const state = {
             validSpace: new RegExp(/\s/),
-            validChar: new RegExp("[a-zA-Z0-9\u4e00-\u9fa5\u0100-\u017F_]"),
+            validChar: new RegExp("[a-zA-Z0-9\u4e00-\u9fa5\u0100-\u017F_@]"),
             validIntegerOnly: new RegExp("[0-9]"),
             validNumberOnly: new RegExp("[0-9.]"),
             validLetterOnly: new RegExp("[a-zA-Z\u4e00-\u9fa5\u0100-\u017F_]"),
@@ -110,7 +183,8 @@ class Parser {
             },
             createCycleTracker(): CycleTracker {
                 return new CycleTracker(_this.config.maxCycles);
-            }
+            },
+            ...(_this.config.overwrites || {})
         }
         const utils = {
             next(num: number = 1) {
@@ -154,6 +228,8 @@ class Parser {
             let char: string = state.getCurrentToken();
             if (state.validSpace.test(char)) {
                 utils.next();
+                // utils.createToken<TokenType.space>({ type: TokenType.space, value: char })
+                //     .next();
                 continue;
             }
 
@@ -222,11 +298,37 @@ class Parser {
     }
 }
 
-// console.log(
-//     new Parser({
-//         head: "/",
-//         name: "test",
-//         description: "test",
-//         args: [],
-//     }).lexer('/qwq "hello" 123 true [ ](213){@"123"}11.1,22.,.33')
-// )
+let p = new Parser({
+    head: "/",
+    name: "test",
+    description: "test",
+    args: [{
+        args: [{
+            name: "name",
+            required: true,
+            type: Types.STRING,
+        }, {
+            name: "ageee",
+            required: true,
+            type: Types.STRING,
+        }, {
+            name: "enum",
+            required: true,
+            type: Types.ENUM({
+                a: "A",
+                b: "B"
+            })
+        }, {
+            name: "object",
+            required: true,
+            type: Types.DICT(Types.STRING, Types.STRING)
+        }],
+        catchAll: true,
+        allowExcess: false,
+    }],
+});
+
+console.log(
+    p._lexer(`/test 1`),
+    JSON.stringify(p._parseCommand(p._lexer(`/test nameeee qwe A {qwq:"qwq"}`)), null, 4)
+)

@@ -1,10 +1,31 @@
 
-export declare class BaseArgType {
-    static TYPE: string;
-    name: string;
+import { Arg } from "./command";
+import { Token, TokenType } from "./parser/parser";
+import { CycleTracker } from "./utils";
+
+type ParsingProviderUtils = {
+    next(num?: number): ParsingProviderUtils;
+}
+type ParsingProviderState = {
+    createCycleTracker(): CycleTracker,
+    getCurrentToken(): Token<TokenType> | undefined,
+    getToken(offset?: number): Token<TokenType> | undefined,
+    is(token: { type: TokenType, value: string }): boolean,
+}
+type ParsingProvider = (state: ParsingProviderState, utils: ParsingProviderUtils, required: boolean, type: TYPES | TYPES[]) => BaseArgType;
+
+export declare class BaseArgType<T = any> {
+    static TYPE: TYPES;
+    name: TYPES;
+    value: any;
     constructor();
-    getName(): string;
+    getName(): TYPES;
     toString(): string;
+    parse: ParsingProvider;
+    public convert(value: Token<TokenType>, type: string): any;
+    public setValue(value: T): void;
+    public getValue(): T;
+    public validate(value: any): boolean;
 }
 
 declare class WithChildType<T extends BaseArgType> extends BaseArgType {
@@ -17,87 +38,173 @@ declare class WithKeyValueType<K extends BaseArgType, V extends BaseArgType> ext
     constructor(keyTypes: K, valueTypes: V);
 }
 
+type Enumable = string | number | boolean;
+export type EnumArgTypeValues<T extends Enumable> = { [key: string]: T };
+declare class EnumArgType<T extends Enumable> extends BaseArgType {
+    enums: EnumArgTypeValues<T>;
+    constructor(values: EnumArgTypeValues<T>);
+}
+
 export interface IBaseArgTypeConstructor {
-    TYPE: string;
+    TYPE: TYPES;
     new(): BaseArgType;
 }
-export interface IWithChildTypeConstructor<T extends BaseArgType>{
-    TYPE: string;
+export interface IWithChildTypeConstructor<T extends BaseArgType> {
+    TYPE: TYPES;
     new(childrenTypes: T[]): WithChildType<T>;
 }
 export interface IWithKeyValueTypeConstructor<K extends BaseArgType, V extends BaseArgType> {
-    TYPE: string;
+    TYPE: TYPES;
     new(keyTypes: K, valueTypes: V): WithKeyValueType<K, V>
 }
+export interface IEnumArgTypeConstructor<T extends string | number | boolean> {
+    TYPE: TYPES;
+    new(values: EnumArgTypeValues<T>): EnumArgType<T>;
+}
 
-const TYPES = {
-    STRING: 'STRING',
-    NUMBER: 'NUMBER',
-    FLOAT: 'FLOAT',
-    INT: 'INT',
-    BOOLEAN: 'BOOLEAN',
-    DICT: 'DICT',
-    ARRAY: 'ARRAY',
-    SET: 'SET',
+export enum TYPES {
+    STRING = 'STRING',
+    NUMBER = 'NUMBER',
+    FLOAT = 'FLOAT',
+    INT = 'INT',
+    BOOLEAN = 'BOOLEAN',
+
+    DICT = 'DICT',
+
+    ARRAY = 'ARRAY',
+    SET = 'SET',
+
+    ENUM = 'ENUM',
+
+    _BASE = 'base',
+    _WITH_KEY_VALUE = 'withKeyValueType',
+    _WITH_CHILD_TYPE = 'withChildType',
 }
 
 /* Base Arg Type */
 export class BaseArgTypeConstructor implements BaseArgType {
-    static TYPE = 'base';
-    name: string;
+    static TYPE = TYPES._BASE;
+    name: TYPES;
+    value: any;
     constructor() {
         this.name = BaseArgTypeConstructor.TYPE;
     }
     getName() {
         return this.name;
     }
-    toString() {
+    toString(): string {
         return this.name;
+    }
+    parse(state: ParsingProviderState, utils: ParsingProviderUtils, required: boolean, type: TYPES | TYPES[]): BaseArgType {
+        let token = state.getCurrentToken();
+        if (!token && required) throw new Error('Unexpected end of input');
+        if (Array.isArray(type)) {
+            for (let t of type) {
+                try {
+                    this.setValue(this.convert(token!, t));
+                    return this;
+                } catch (e) {
+                    continue;
+                }
+            }
+        } else this.setValue(this.convert(token!, type));
+        utils.next();
+        return this;
+    }
+    convert(value: Token<TokenType>, type: string): any {
+        switch (type) {
+            case TYPES.STRING:
+                return String(value.value);
+            case TYPES.NUMBER:
+                return Number(value.value);
+            case TYPES.FLOAT:
+                return parseFloat(String(value.value));
+            case TYPES.INT:
+                return parseInt(String(value.value));
+            case TYPES.BOOLEAN:
+                return value.value === 'true';
+            default:
+                throw new Error(`Invalid type: ${type}`);
+        }
+    }
+    validate(value: any): boolean {
+        return true;
+    }
+    setValue(value: any) {
+        if (!this.validate(value)) throw new Error(`Invalid value: ${value}, expected: ${this.name}`);
+        this.value = value;
+    }
+    getValue() {
+        return this.value;
     }
 }
 
 class StringArgTypeConstructor extends BaseArgTypeConstructor {
     static TYPE = TYPES.STRING;
-    name: string;
+    name: TYPES;
     constructor() {
         super();
         this.name = StringArgTypeConstructor.TYPE;
+    }
+    validate(value: any): boolean {
+        return typeof value === 'string';
     }
 }
 
 class NumberArgTypeConstructor extends BaseArgTypeConstructor {
     static TYPE = TYPES.NUMBER;
-    name: string;
+    name: TYPES;
     constructor() {
         super();
         this.name = NumberArgTypeConstructor.TYPE;
+    }
+    validate(value: any): boolean {
+        return typeof value === 'number';
+    }
+    convert(value: Token<TokenType>, type: string) {
+        switch (type) {
+            case TYPES.NUMBER:
+                if (isNaN(Number(value.value))) throw new Error(`Invalid value: ${value.value}`);
+                return value.value;
+            default:
+                return super.convert(value, type);
+        }
     }
 }
 
 class FloatArgTypeConstructor extends BaseArgTypeConstructor {
     static TYPE = TYPES.FLOAT;
-    name: string;
+    name: TYPES;
     constructor() {
         super();
         this.name = FloatArgTypeConstructor.TYPE;
+    }
+    validate(value: any): boolean {
+        return typeof value === 'number';
     }
 }
 
 class IntArgTypeConstructor extends BaseArgTypeConstructor {
     static TYPE = TYPES.INT;
-    name: string;
+    name: TYPES;
     constructor() {
         super();
         this.name = IntArgTypeConstructor.TYPE;
+    }
+    validate(value: any): boolean {
+        return typeof value === 'number' && Number.isInteger(value);
     }
 }
 
 class BooleanArgTypeConstructor extends BaseArgTypeConstructor {
     static TYPE = TYPES.BOOLEAN;
-    name: string;
+    name: TYPES;
     constructor() {
         super();
         this.name = BooleanArgTypeConstructor.TYPE;
+    }
+    validate(value: any): boolean {
+        return typeof value === 'boolean';
     }
 }
 
@@ -105,8 +212,8 @@ class BooleanArgTypeConstructor extends BaseArgTypeConstructor {
 class WithKeyValueTypeConstructor<K extends BaseArgType, V extends BaseArgType>
     extends BaseArgTypeConstructor
     implements WithKeyValueType<K, V> {
-    static TYPE = 'withKeyValueType';
-    name: string;
+    static TYPE = TYPES._WITH_KEY_VALUE;
+    name: TYPES;
     keyTypes: K;
     valueTypes: V;
     constructor(keyTypes: K, valueTypes: V) {
@@ -115,37 +222,86 @@ class WithKeyValueTypeConstructor<K extends BaseArgType, V extends BaseArgType>
         this.valueTypes = valueTypes;
         this.name = WithKeyValueTypeConstructor.TYPE;
     }
+    validate(value: any): boolean {
+        return typeof value === 'object' && value !== null && Object.keys(value).every(k => (
+            this.keyTypes.validate(k) && this.valueTypes.validate(value[k])
+        ));
+    }
 }
 
-class DictArgTypeConstructor extends WithKeyValueTypeConstructor<BaseArgType, BaseArgType> {
+class DictArgTypeConstructor<K extends BaseArgType<string> = BaseArgType<string>, V extends BaseArgType = BaseArgType> extends WithKeyValueTypeConstructor<K, V> {
     static TYPE = TYPES.DICT;
-    name: string;
-    constructor(keyTypes: BaseArgType, valueTypes: BaseArgType) {
+    name: TYPES;
+    constructor(keyTypes: K, valueTypes: V) {
         super(keyTypes, valueTypes);
         this.name = DictArgTypeConstructor.TYPE;
     }
+    parse(state: ParsingProviderState, utils: ParsingProviderUtils, required: boolean, type: TYPES | TYPES[]): BaseArgType {
+        let token = state.getCurrentToken();
+        if (!token || token.type !== TokenType.operator || token.value !== '{') throw new Error('Expected {');
+
+        let dict: Record<string, V> = {} as Record<string, V>;
+        let cycle = state.createCycleTracker();
+
+        utils.next();
+        while (!state.is({ type: TokenType.operator, value: '}' })) {
+            cycle.next(() => { throw new Error('Cycle limit exceeded'); });
+            if (!state.getCurrentToken()) throw new Error('Unexpected end of input');
+            if (state.getCurrentToken()?.type === TokenType.operator) throw new Error('Unexpected operator: ' + state.getCurrentToken()?.value);
+
+            let key = this.keyTypes.parse(state, utils, true, this.keyTypes.name).getValue();
+
+            utils.next();
+
+            let token = state.getCurrentToken();
+            if (!state.is({ type: TokenType.operator, value: ':' })) throw new Error('Expected ":", but got: ' + (token || {}).value);
+            utils.next();
+
+            if (state.getCurrentToken()?.type === TokenType.operator) throw new Error('Unexpected operator: ' + state.getCurrentToken()?.value);
+            let value = this.valueTypes.parse(state, utils, true, this.valueTypes.name).getValue();
+            dict[key] = value;
+
+            utils.next();
+
+            if (state.is({ type: TokenType.operator, value: ',' })) {
+                utils.next();
+                continue;
+            } else if (state.is({ type: TokenType.operator, value: '}' })) {
+                break;
+            } else {
+                throw new Error('Expected "," or "}", but got: ' + state.getCurrentToken()?.value);
+            }
+        }
+        utils.next();
+
+        this.setValue(dict);
+        return this;
+    }
 }
+
+// @TODO
+// MixedDictArgTypeConstructor
 
 /* with child type */
 class WithChildTypeConstructor<T extends BaseArgType>
     extends BaseArgTypeConstructor
     implements WithChildType<T> {
-    static TYPE = 'withChildType';
-    name: string;
+    static TYPE = TYPES._WITH_CHILD_TYPE;
+    name: TYPES;
     childrenTypes: T[];
     constructor(childrenTypes: T[]) {
         super();
         this.childrenTypes = childrenTypes;
         this.name = WithChildTypeConstructor.TYPE;
     }
-    toString() {
-        return `${this.name}<${this.childrenTypes.toString()}>`;
+    toString(): string {
+        return `${this.getName()}<${this.childrenTypes.toString()}>`;
     }
 }
 
 class ArrayArgTypeConstructor extends WithChildTypeConstructor<BaseArgType> {
     static TYPE = TYPES.ARRAY;
-    name: string;
+    name: TYPES;
     constructor(childrenTypes: BaseArgType[]) {
         super(childrenTypes);
         this.name = ArrayArgTypeConstructor.TYPE;
@@ -153,19 +309,103 @@ class ArrayArgTypeConstructor extends WithChildTypeConstructor<BaseArgType> {
     toString() {
         return `${this.name}<${this.childrenTypes.toString()}>[]`;
     }
+    parse(state: ParsingProviderState, utils: ParsingProviderUtils, required: boolean, type: TYPES | TYPES[]): BaseArgType {
+        let token = state.getCurrentToken();
+        if (!token || token.type !== TokenType.operator || token.value !== '{') throw new Error('Expected {');
+
+        let output = [];
+        let cycle = state.createCycleTracker();
+
+        utils.next();
+        while (!state.is({ type: TokenType.operator, value: '}' })) {
+            cycle.next(() => { throw new Error('Cycle limit exceeded'); });
+            if (!state.getCurrentToken()) throw new Error('Unexpected end of input');
+            if (state.getCurrentToken()?.type === TokenType.operator) throw new Error('Unexpected operator: ' + state.getCurrentToken()?.value);
+
+            let vToken = state.getCurrentToken();
+            if (!vToken) throw new Error('Unexpected end of input');
+            let value;
+            for (let t of this.childrenTypes) {
+                try {
+                    value = t.parse(state, utils, true, t.name).getValue();
+                    break;
+                } catch (e) {
+                    continue;
+                }
+            }
+            if (!value) throw new Error('Invalid value: ' + vToken.value);
+
+            output.push(value);
+            utils.next();
+
+            if (state.is({ type: TokenType.operator, value: ',' })) {
+                utils.next();
+                continue;
+            } else if (state.is({ type: TokenType.operator, value: ']' })) {
+                break;
+            } else {
+                throw new Error('Expected "," or "]", but got: ' + state.getCurrentToken()?.value);
+            }
+        }
+        utils.next();
+
+        this.setValue(output);
+        return this;
+    }
 }
 
 class SetArgTypeConstructor extends WithChildTypeConstructor<BaseArgType> {
     static TYPE = TYPES.SET;
-    name: string;
+    name: TYPES;
     constructor(childrenTypes: BaseArgType[]) {
         super(childrenTypes);
         this.name = SetArgTypeConstructor.TYPE;
     }
 }
 
-export type ArgType = IBaseArgTypeConstructor | IWithChildTypeConstructor<BaseArgType> | IWithKeyValueTypeConstructor<BaseArgType, BaseArgType>;
-export type ArgTypeConstructor  = typeof BaseArgTypeConstructor | typeof WithChildTypeConstructor | typeof WithKeyValueTypeConstructor;
+/* Enum Type */
+class EnumArgTypeConstructor<T extends Enumable>
+    extends BaseArgTypeConstructor
+    implements EnumArgType<T> {
+    static TYPE = TYPES.ENUM;
+    name: TYPES;
+    enums: EnumArgTypeValues<T>;
+    constructor(values: EnumArgTypeValues<T>) {
+        super();
+        this.enums = values;
+        this.name = EnumArgTypeConstructor.TYPE;
+    }
+    validate(value: any): boolean {
+        let [k, _] = (Object.entries(this.enums).filter(([_, v]) => v === value.value)[0] || [void 0, void 0]);
+        return k !== void 0;
+    }
+    setValue(value: any): void {
+        if (!this.validate({
+            value
+        })) throw new Error(`Invalid value: ${value.value}`);
+        this.value = value;
+    }
+    convert(value: Token<TokenType>, type: string): any {
+        switch (type) {
+            case TYPES.ENUM:
+                if (!this.validate(value)) throw new Error(`Invalid value: ${value.value}`);
+                return value.value;
+            default:
+                return super.convert(value, type);
+        }
+    }
+}
+
+export type ArgType =
+    IBaseArgTypeConstructor
+    | IWithChildTypeConstructor<BaseArgType>
+    | IWithKeyValueTypeConstructor<BaseArgType, BaseArgType>
+    | IEnumArgTypeConstructor<Enumable>;
+export type ArgTypeConstructor =
+    typeof BaseArgTypeConstructor
+    | typeof WithChildTypeConstructor
+    | typeof WithKeyValueTypeConstructor
+    | typeof EnumArgTypeConstructor;
 export type ArgTypeConstructorMap = {
     STRING: typeof StringArgTypeConstructor;
     NUMBER: typeof NumberArgTypeConstructor;
@@ -177,6 +417,8 @@ export type ArgTypeConstructorMap = {
 
     ARRAY: typeof ArrayArgTypeConstructor;
     SET: typeof SetArgTypeConstructor;
+
+    ENUM: typeof EnumArgTypeConstructor;
 }
 export const Constructors: ArgTypeConstructorMap = {
     /* Base Arg Type */
@@ -192,5 +434,8 @@ export const Constructors: ArgTypeConstructorMap = {
     /* With Child Type */
     ARRAY: ArrayArgTypeConstructor,
     SET: SetArgTypeConstructor,
+
+    /* Enum Type */
+    ENUM: EnumArgTypeConstructor,
 }
 
