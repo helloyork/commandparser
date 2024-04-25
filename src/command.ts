@@ -2,6 +2,13 @@
 import { z } from "zod";
 
 import { BaseArgType } from "./constructors";
+import { Types } from "./Types";
+
+// =========================================================
+// 
+// 
+// 
+// =========================================================
 
 
 
@@ -18,10 +25,11 @@ export interface ArgOptions {
     catchAll?: boolean;
     allowExcess?: boolean;
 }
-interface CommandOptions {
+export interface CommandOptions {
     name: string;
     description: string;
-    args: ArgOptions;
+    head?: string;
+    args: ArgOptions[];
 }
 
 const ArgSchema = z.object({
@@ -41,18 +49,35 @@ const ArgOptionsSchema = z.object({
 const CommandOptionsSchema = z.object({
     name: z.string(),
     description: z.string(),
-    args: ArgOptionsSchema,
+    head: z.string().optional(),
+    args: z.array(ArgOptionsSchema),
 });
 
+type CommandOptionConfig = {[key: string]: CommandOptions};
+
+class Options {
+    static Types = Types;
+    commands: CommandOptionConfig;
+    constructor(commands: CommandOptionConfig) {
+        this.commands = commands;
+        this.validateConfig();
+    }
+    validateConfig() {
+        Object.keys(this.commands).forEach((key) => {
+            CommandOptionsSchema.parse(this.commands[key]);
+        });
+        return this;
+    }
+}
 
 class CommandParser {
-    config: CommandOptions[] = [];
-    constructor(commands: CommandOptions[]) {
-        commands.forEach(this.validateConfig);
-        this.config = commands;
-    }
-    validateConfig(c: CommandOptions) {
-        CommandOptionsSchema.parse(c);
+    options: Options
+    constructor(commands: CommandOptionConfig | Options) {
+        if (commands instanceof Options) {
+            this.options = commands;
+        } else {
+            this.options = new Options(commands);
+        }
     }
 }
 
