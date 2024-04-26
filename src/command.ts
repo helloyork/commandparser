@@ -1,7 +1,7 @@
 
 import { z } from "zod";
 
-import { ArgTypeConstructor, BaseArgType, BaseArgTypeConstructor, TYPES } from "./constructors";
+import { ArgTypeConstructor, BaseArgType, BaseArgTypeConstructor, TYPES, ArgType as IArgType, ArgTypeConstructors } from "./constructors";
 import { Types } from "./Types";
 
 // =========================================================
@@ -11,7 +11,7 @@ import { Types } from "./Types";
 // =========================================================
 
 export type ArgType = {
-    construct: () => BaseArgTypeConstructor,
+    construct: () => ArgTypeConstructors,
     constructor: ArgTypeConstructor,
 };
 export interface Arg {

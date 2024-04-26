@@ -23,9 +23,11 @@ export declare class BaseArgType<T = any> {
     toString(): string;
     parse: ParsingProvider;
     public convert(value: Token<TokenType>, type: string): any;
+    clone(): BaseArgType<T>;
+    format(): BaseArgType<T>;
     public setValue(value: T): void;
     public getValue(): T;
-    public validate(value: any): boolean;
+    public validate(value: any, scrict?: boolean): boolean;
 }
 
 declare class WithChildType<T extends BaseArgType> extends BaseArgType {
@@ -98,6 +100,7 @@ export class BaseArgTypeConstructor implements BaseArgType {
     parse(state: ParsingProviderState, utils: ParsingProviderUtils, required: boolean, type: TYPES | TYPES[]): BaseArgType {
         let token = state.getCurrentToken();
         if (!token && required) throw new Error('Unexpected end of input');
+
         if (Array.isArray(type)) {
             for (let t of type) {
                 try {
@@ -137,6 +140,15 @@ export class BaseArgTypeConstructor implements BaseArgType {
     getValue() {
         return this.value;
     }
+    clone() {
+        let clone = new (this.constructor as any)();
+        clone.value = this.value;
+        return clone;
+    }
+    format(): BaseArgType<any> {
+        this.setValue(this.convert({ value: this.getValue(), type: TokenType.unknown }, this.name));
+        return this;
+    }
 }
 
 class StringArgTypeConstructor extends BaseArgTypeConstructor {
@@ -146,8 +158,8 @@ class StringArgTypeConstructor extends BaseArgTypeConstructor {
         super();
         this.name = StringArgTypeConstructor.TYPE;
     }
-    validate(value: any): boolean {
-        return typeof value === 'string';
+    validate(value: any, strict?: boolean): boolean {
+        return value === String(value);
     }
 }
 
@@ -158,14 +170,14 @@ class NumberArgTypeConstructor extends BaseArgTypeConstructor {
         super();
         this.name = NumberArgTypeConstructor.TYPE;
     }
-    validate(value: any): boolean {
-        return typeof value === 'number';
+    validate(value: any, strict?: boolean): boolean {
+        return strict ? typeof value === "number" : !isNaN(value);
     }
     convert(value: Token<TokenType>, type: string) {
         switch (type) {
             case TYPES.NUMBER:
-                if (isNaN(Number(value.value))) throw new Error(`Invalid value: ${value.value}`);
-                return value.value;
+                if (!this.validate(value.value)) throw new Error(`Invalid value: ${value.value}`);
+                return Number(value.value);
             default:
                 return super.convert(value, type);
         }
@@ -179,8 +191,8 @@ class FloatArgTypeConstructor extends BaseArgTypeConstructor {
         super();
         this.name = FloatArgTypeConstructor.TYPE;
     }
-    validate(value: any): boolean {
-        return typeof value === 'number';
+    validate(value: any, strict?: boolean): boolean {
+        return strict ? typeof value === 'number' : !isNaN(value);
     }
 }
 
@@ -191,8 +203,8 @@ class IntArgTypeConstructor extends BaseArgTypeConstructor {
         super();
         this.name = IntArgTypeConstructor.TYPE;
     }
-    validate(value: any): boolean {
-        return typeof value === 'number' && Number.isInteger(value);
+    validate(value: any, strict?: boolean): boolean {
+        return strict ? typeof value === 'number' && Number.isInteger(value) : !isNaN(value) && Number.isInteger(value);
     }
 }
 
@@ -203,8 +215,11 @@ class BooleanArgTypeConstructor extends BaseArgTypeConstructor {
         super();
         this.name = BooleanArgTypeConstructor.TYPE;
     }
-    validate(value: any): boolean {
-        return typeof value === 'boolean';
+    validate(value: any, strict?: boolean): boolean {
+        return strict ? value === true || value === false : typeof value === 'boolean';
+    }
+    convert(value: Token<TokenType>, type: string) {
+        return Boolean(value.value);
     }
 }
 
@@ -227,20 +242,27 @@ class WithKeyValueTypeConstructor<K extends BaseArgType, V extends BaseArgType>
             this.keyTypes.validate(k) && this.valueTypes.validate(value[k])
         ));
     }
+    clone() {
+        let clone = new (this.constructor as any)(this.keyTypes, this.valueTypes);
+        clone.value = this.value;
+        return clone;
+    }
 }
 
 class DictArgTypeConstructor<K extends BaseArgType<string> = BaseArgType<string>, V extends BaseArgType = BaseArgType> extends WithKeyValueTypeConstructor<K, V> {
     static TYPE = TYPES.DICT;
     name: TYPES;
+    value: Map<K, V>;
     constructor(keyTypes: K, valueTypes: V) {
         super(keyTypes, valueTypes);
+        this.value = new Map();
         this.name = DictArgTypeConstructor.TYPE;
     }
     parse(state: ParsingProviderState, utils: ParsingProviderUtils, required: boolean, type: TYPES | TYPES[]): BaseArgType {
         let token = state.getCurrentToken();
         if (!token || token.type !== TokenType.operator || token.value !== '{') throw new Error('Expected {');
 
-        let dict: Record<string, V> = {} as Record<string, V>;
+        let dict = new Map();
         let cycle = state.createCycleTracker();
 
         utils.next();
@@ -249,19 +271,15 @@ class DictArgTypeConstructor<K extends BaseArgType<string> = BaseArgType<string>
             if (!state.getCurrentToken()) throw new Error('Unexpected end of input');
             if (state.getCurrentToken()?.type === TokenType.operator) throw new Error('Unexpected operator: ' + state.getCurrentToken()?.value);
 
-            let key = this.keyTypes.parse(state, utils, true, this.keyTypes.name).getValue();
-
-            utils.next();
+            let key = this.keyTypes.clone().parse(state, utils, true, this.keyTypes.name).format();
 
             let token = state.getCurrentToken();
             if (!state.is({ type: TokenType.operator, value: ':' })) throw new Error('Expected ":", but got: ' + (token || {}).value);
             utils.next();
 
             if (state.getCurrentToken()?.type === TokenType.operator) throw new Error('Unexpected operator: ' + state.getCurrentToken()?.value);
-            let value = this.valueTypes.parse(state, utils, true, this.valueTypes.name).getValue();
-            dict[key] = value;
-
-            utils.next();
+            let value = this.valueTypes.clone().parse(state, utils, true, this.valueTypes.name).format();
+            dict.set(key, value);
 
             if (state.is({ type: TokenType.operator, value: ',' })) {
                 utils.next();
@@ -276,6 +294,9 @@ class DictArgTypeConstructor<K extends BaseArgType<string> = BaseArgType<string>
 
         this.setValue(dict);
         return this;
+    }
+    validate(value: any): boolean {
+        return Object.getPrototypeOf.call(null, value) === Map.prototype;
     }
 }
 
@@ -297,27 +318,33 @@ class WithChildTypeConstructor<T extends BaseArgType>
     toString(): string {
         return `${this.getName()}<${this.childrenTypes.toString()}>`;
     }
+    clone() {
+        let clone = new (this.constructor as any)(this.childrenTypes);
+        clone.value = this.value;
+        return clone;
+    }
 }
 
-class ArrayArgTypeConstructor extends WithChildTypeConstructor<BaseArgType> {
+class ArrayArgTypeConstructor<T extends BaseArgType> extends WithChildTypeConstructor<T> {
     static TYPE = TYPES.ARRAY;
     name: TYPES;
-    constructor(childrenTypes: BaseArgType[]) {
+    value: T[];
+    constructor(childrenTypes: T[]) {
         super(childrenTypes);
+        this.value = [];
         this.name = ArrayArgTypeConstructor.TYPE;
     }
     toString() {
         return `${this.name}<${this.childrenTypes.toString()}>[]`;
     }
     parse(state: ParsingProviderState, utils: ParsingProviderUtils, required: boolean, type: TYPES | TYPES[]): BaseArgType {
-        let token = state.getCurrentToken();
-        if (!token || token.type !== TokenType.operator || token.value !== '{') throw new Error('Expected {');
+        if (!state.is({ type: TokenType.operator, value: '[' })) throw new Error('Expected "["');
+        utils.next();
 
         let output = [];
         let cycle = state.createCycleTracker();
 
-        utils.next();
-        while (!state.is({ type: TokenType.operator, value: '}' })) {
+        while (!state.is({ type: TokenType.operator, value: ']' })) {
             cycle.next(() => { throw new Error('Cycle limit exceeded'); });
             if (!state.getCurrentToken()) throw new Error('Unexpected end of input');
             if (state.getCurrentToken()?.type === TokenType.operator) throw new Error('Unexpected operator: ' + state.getCurrentToken()?.value);
@@ -326,31 +353,41 @@ class ArrayArgTypeConstructor extends WithChildTypeConstructor<BaseArgType> {
             if (!vToken) throw new Error('Unexpected end of input');
             let value;
             for (let t of this.childrenTypes) {
-                try {
-                    value = t.parse(state, utils, true, t.name).getValue();
+                if (t.validate(vToken.value, true)) {
+                    value = t.clone().parse(state, utils, true, t.name).format();
                     break;
-                } catch (e) {
-                    continue;
+                }
+            }
+            if (!value) {
+                for (let t of this.childrenTypes) {
+                    try {
+                        value = t.clone().parse(state, utils, true, t.name).format();
+                        break;
+                    } catch (e) {
+                        continue;
+                    }
                 }
             }
             if (!value) throw new Error('Invalid value: ' + vToken.value);
 
             output.push(value);
-            utils.next();
 
             if (state.is({ type: TokenType.operator, value: ',' })) {
                 utils.next();
                 continue;
             } else if (state.is({ type: TokenType.operator, value: ']' })) {
+                utils.next();
                 break;
             } else {
                 throw new Error('Expected "," or "]", but got: ' + state.getCurrentToken()?.value);
             }
         }
-        utils.next();
 
         this.setValue(output);
         return this;
+    }
+    validate(value: any): boolean {
+        return Array.isArray(value);
     }
 }
 
@@ -404,8 +441,16 @@ export type ArgType =
 export type ArgTypeConstructor =
     typeof BaseArgTypeConstructor
     | typeof WithChildTypeConstructor
+    | typeof ArrayArgTypeConstructor
+    | typeof SetArgTypeConstructor
     | typeof WithKeyValueTypeConstructor
+    | typeof DictArgTypeConstructor
     | typeof EnumArgTypeConstructor;
+export type ArgTypeConstructors =
+    BaseArgTypeConstructor
+    | WithChildTypeConstructor<BaseArgType>
+    | WithKeyValueTypeConstructor<BaseArgType, BaseArgType>
+    | EnumArgTypeConstructor<Enumable>;
 export type ArgTypeConstructorMap = {
     STRING: typeof StringArgTypeConstructor;
     NUMBER: typeof NumberArgTypeConstructor;

@@ -11,6 +11,7 @@ export enum TokenType {
     number = 'number',
     boolean = 'boolean',
     literal = 'literal',
+    unknown = 'unknown',
 }
 type TokenValue = {
     'space': string;
@@ -19,6 +20,7 @@ type TokenValue = {
     'number': number;
     'boolean': boolean;
     'literal': string;
+    'unknown': string;
 }
 export type Token<T extends TokenType> = {
     type: T;
@@ -40,7 +42,7 @@ interface ParserConfig {
 
 
 class Parser {
-    static operators = ['(', ')', '[', ']', '{', '}', ':'];
+    static operators = ['(', ')', '[', ']', '{', '}', ':', ','];
     static defaultConfig: ParserConfig = {
         maxCycles: 10000,
         overwrites: {}
@@ -127,7 +129,6 @@ class Parser {
             try {
                 res.push(this._parseArg([...tokens], arg));
             } catch (e) {
-                // console.error(e);
                 continue;
             }
         }
@@ -192,7 +193,7 @@ class Parser {
                 return utils
             },
             createToken<T extends TokenType>({ type, value }: Token<T>, skip: boolean = false) {
-                if (!type || !value) throw new Error('Invalid token');
+                if (!type) throw new Error('Invalid token');
                 tokens.push({ type, value });
                 if (skip) utils.next();
                 return utils;
@@ -228,8 +229,6 @@ class Parser {
             let char: string = state.getCurrentToken();
             if (state.validSpace.test(char)) {
                 utils.next();
-                // utils.createToken<TokenType.space>({ type: TokenType.space, value: char })
-                //     .next();
                 continue;
             }
 
@@ -307,10 +306,10 @@ let p = new Parser({
             name: "name",
             required: true,
             type: Types.STRING,
-        }, {
-            name: "ageee",
+        },{
+            name: "name2",
             required: true,
-            type: Types.STRING,
+            type: Types.NUMBER,
         }, {
             name: "enum",
             required: true,
@@ -319,16 +318,32 @@ let p = new Parser({
                 b: "B"
             })
         }, {
-            name: "object",
+            name: "array",
+            required: true,
+            type: Types.ARRAY(Types.STRING)
+        }, {
+            name: "dict",
             required: true,
             type: Types.DICT(Types.STRING, Types.STRING)
+        }, {
+            name: "array",
+            required: true,
+            type: Types.ARRAY(Types.NUMBER)
+        }, {
+            name: "array",
+            required: true,
+            type: Types.ARRAY(Types.NUMBER, Types.STRING, Types.BOOLEAN)
         }],
         catchAll: true,
-        allowExcess: false,
+        allowExcess: true,
     }],
 });
 
+let r = p._parseCommand(p._lexer(`/test nameeee "123" A [1,"2",3] {"qwq": 123} [1,"2", true] [1,"2", true]`));
 console.log(
-    p._lexer(`/test 1`),
-    JSON.stringify(p._parseCommand(p._lexer(`/test nameeee qwe A {qwq:"qwq"}`)), null, 4)
+    p._lexer(`/test nameeee "123" A [1,"2",3] {"qwq": 123} [1,"2", true] [1,"2", false, true]`),
+    JSON.stringify(r, null, 4),
+    r[0]?.args?.[r[0].args.length - 1]?.value.entries()
 )
+
+
