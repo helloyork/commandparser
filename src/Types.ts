@@ -37,12 +37,6 @@ export const Types = {
             construct: () => new Constructors.ARRAY(valueType.map(v => v.construct()))
         }
     },
-    SET: function (...valueType: ArgType[]) {
-        return {
-            constructor: Constructors.SET,
-            construct: () => new Constructors.SET(valueType.map(v => v.construct()))
-        }
-    },
 
     ENUM: function (value: EnumArgTypeValues<any>) {
         return {

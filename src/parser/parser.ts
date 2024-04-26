@@ -2,7 +2,8 @@ import { Types } from "../Types";
 import { ArgOptions, CommandOptions } from "../command";
 import { ArgTypeConstructorMap, BaseArgType, Constructors, TYPES } from "../constructors";
 import { CycleTracker } from "../utils";
-import { ParseError } from "./errors";
+
+import { ParseError, ParseArgTypeError, ParseRuntimeError, ParseSyntaxError } from "./errors";
 
 export enum TokenType {
     space = 'space',
@@ -33,11 +34,12 @@ enum NodeType {
     arg = 'arg',
 }
 
-interface ParserConfig {
+export interface ParserConfig {
     maxCycles: number;
     overwrites: {
         [key: string]: string;
-    }
+    },
+    strict: boolean;
 }
 
 
@@ -45,7 +47,8 @@ class Parser {
     static operators = ['(', ')', '[', ']', '{', '}', ':', ','];
     static defaultConfig: ParserConfig = {
         maxCycles: 10000,
-        overwrites: {}
+        overwrites: {},
+        strict: false,
     }
     commandOptions: CommandOptions;
     argOptions: ArgOptions[];
@@ -85,6 +88,7 @@ class Parser {
                 let t = tokens[current];
                 return t?.type === token.type && t?.value === token.value;
             },
+            parseConfig: _this.config,
             __tokens: tokens,
         }
         const utils = {
@@ -100,7 +104,7 @@ class Parser {
 
             let arg = expectedArgs.shift()!, constructor = arg?.type || Constructors.STRING;
             if (!state.getCurrentToken()) {
-                if (arg.required) throw new Error('Unexpected end of input');
+                if (arg.required) throw new ParseArgTypeError('Missing required argument', current, arg.name, arg.type.constructor.TYPE, 'undefined');
                 break;
             }
 
@@ -108,7 +112,7 @@ class Parser {
             output.push(type);
         }
         if (!expected.allowExcess && state.getCurrentToken()) {
-            throw new Error('Excess tokens');
+            throw new ParseSyntaxError('Excess tokens');
         }
         if (expected.catchAll) {
             while (state.getCurrentToken()) {
@@ -157,8 +161,7 @@ class Parser {
                 return tokens;
             },
             tracked(type: typeof Error | typeof ParseError, mes: string, i = current) {
-                let message = `${mes}\nat index ${i}:\n${input.slice(i - 10, i + 10)}\n${i >= 10 ? ' '.repeat(10) : ' '.repeat(i)
-                    }^`;
+                let message = `${mes}\nat index ${i}:\n${input.slice(i - 10, i + 10)}\n${i >= 10 ? ' '.repeat(10) : ' '.repeat(i)}^`;
                 return Reflect.construct(type, [message]);
             },
             isNumber(start: number = current) {
@@ -339,9 +342,10 @@ let p = new Parser({
     }],
 });
 
-let r = p._parseCommand(p._lexer(`/test nameeee "123" A [1,"2",3] {"qwq": 123} [1,"2", true] [1,"2", true]`));
+let t = `/test nameeee "123" A [1,"2",3] {"qwq": 123} [1,"2", true] [1,"2", false, true] false true`
+let r = p._parseCommand(p._lexer(t));
 console.log(
-    p._lexer(`/test nameeee "123" A [1,"2",3] {"qwq": 123} [1,"2", true] [1,"2", false, true]`),
+    p._lexer(t),
     JSON.stringify(r, null, 4),
     r[0]?.args?.[r[0].args.length - 1]?.value.entries()
 )

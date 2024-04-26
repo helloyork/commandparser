@@ -1,6 +1,6 @@
 
 import { Arg } from "./command";
-import { Token, TokenType } from "./parser/parser";
+import { ParserConfig, Token, TokenType } from "./parser/parser";
 import { CycleTracker } from "./utils";
 
 type ParsingProviderUtils = {
@@ -11,6 +11,7 @@ type ParsingProviderState = {
     getCurrentToken(): Token<TokenType> | undefined,
     getToken(offset?: number): Token<TokenType> | undefined,
     is(token: { type: TokenType, value: string }): boolean,
+    parseConfig: ParserConfig,
 }
 type ParsingProvider = (state: ParsingProviderState, utils: ParsingProviderUtils, required: boolean, type: TYPES | TYPES[]) => BaseArgType;
 
@@ -352,10 +353,12 @@ class ArrayArgTypeConstructor<T extends BaseArgType> extends WithChildTypeConstr
             let vToken = state.getCurrentToken();
             if (!vToken) throw new Error('Unexpected end of input');
             let value;
-            for (let t of this.childrenTypes) {
-                if (t.validate(vToken.value, true)) {
-                    value = t.clone().parse(state, utils, true, t.name).format();
-                    break;
+            if (state.parseConfig.strict) {
+                for (let t of this.childrenTypes) {
+                    if (t.validate(vToken.value, true)) {
+                        value = t.clone().parse(state, utils, true, t.name).format();
+                        break;
+                    }
                 }
             }
             if (!value) {
@@ -391,14 +394,6 @@ class ArrayArgTypeConstructor<T extends BaseArgType> extends WithChildTypeConstr
     }
 }
 
-class SetArgTypeConstructor extends WithChildTypeConstructor<BaseArgType> {
-    static TYPE = TYPES.SET;
-    name: TYPES;
-    constructor(childrenTypes: BaseArgType[]) {
-        super(childrenTypes);
-        this.name = SetArgTypeConstructor.TYPE;
-    }
-}
 
 /* Enum Type */
 class EnumArgTypeConstructor<T extends Enumable>
@@ -442,7 +437,6 @@ export type ArgTypeConstructor =
     typeof BaseArgTypeConstructor
     | typeof WithChildTypeConstructor
     | typeof ArrayArgTypeConstructor
-    | typeof SetArgTypeConstructor
     | typeof WithKeyValueTypeConstructor
     | typeof DictArgTypeConstructor
     | typeof EnumArgTypeConstructor;
@@ -461,7 +455,6 @@ export type ArgTypeConstructorMap = {
     DICT: typeof DictArgTypeConstructor;
 
     ARRAY: typeof ArrayArgTypeConstructor;
-    SET: typeof SetArgTypeConstructor;
 
     ENUM: typeof EnumArgTypeConstructor;
 }
@@ -478,7 +471,6 @@ export const Constructors: ArgTypeConstructorMap = {
 
     /* With Child Type */
     ARRAY: ArrayArgTypeConstructor,
-    SET: SetArgTypeConstructor,
 
     /* Enum Type */
     ENUM: EnumArgTypeConstructor,
