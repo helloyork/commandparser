@@ -1,5 +1,6 @@
 
 import { Arg } from "./command";
+import { ParseArgTypeError, ParseRuntimeError, ParseSyntaxError } from "./parser/errors";
 import { ParserConfig, Token, TokenType } from "./parser/parser";
 import { CycleTracker } from "./utils";
 
@@ -23,12 +24,12 @@ export declare class BaseArgType<T = any> {
     getName(): TYPES;
     toString(): string;
     parse: ParsingProvider;
-    public convert(value: Token<TokenType>, type: string): any;
     clone(): BaseArgType<T>;
     format(): BaseArgType<T>;
     public setValue(value: T): void;
     public getValue(): T;
     public validate(value: any, scrict?: boolean): boolean;
+    public convert(value: Token<TokenType>, type: string): any;
 }
 
 declare class WithChildType<T extends BaseArgType> extends BaseArgType {
@@ -95,12 +96,9 @@ export class BaseArgTypeConstructor implements BaseArgType {
     getName() {
         return this.name;
     }
-    toString(): string {
-        return this.name;
-    }
     parse(state: ParsingProviderState, utils: ParsingProviderUtils, required: boolean, type: TYPES | TYPES[]): BaseArgType {
         let token = state.getCurrentToken();
-        if (!token && required) throw new Error('Unexpected end of input');
+        if (!token && required) throw new ParseSyntaxError('Unexpected end of input');
 
         if (Array.isArray(type)) {
             for (let t of type) {
@@ -108,6 +106,7 @@ export class BaseArgTypeConstructor implements BaseArgType {
                     this.setValue(this.convert(token!, t));
                     return this;
                 } catch (e) {
+                    if (state.parseConfig.logErrors) console.error(e);
                     continue;
                 }
             }
@@ -128,14 +127,14 @@ export class BaseArgTypeConstructor implements BaseArgType {
             case TYPES.BOOLEAN:
                 return value.value === 'true';
             default:
-                throw new Error(`Invalid type: ${type}`);
+                throw new ParseArgTypeError(`Invalid type: ${type}`);
         }
     }
     validate(value: any): boolean {
         return true;
     }
     setValue(value: any) {
-        if (!this.validate(value)) throw new Error(`Invalid value: ${value}, expected: ${this.name}`);
+        if (!this.validate(value)) throw new ParseArgTypeError(`Invalid value: ${value}, expected: ${this.name}`);
         this.value = value;
     }
     getValue() {
@@ -149,6 +148,9 @@ export class BaseArgTypeConstructor implements BaseArgType {
     format(): BaseArgType<any> {
         this.setValue(this.convert({ value: this.getValue(), type: TokenType.unknown }, this.name));
         return this;
+    }
+    toString(): string {
+        return this.name;
     }
 }
 
@@ -177,7 +179,12 @@ class NumberArgTypeConstructor extends BaseArgTypeConstructor {
     convert(value: Token<TokenType>, type: string) {
         switch (type) {
             case TYPES.NUMBER:
-                if (!this.validate(value.value)) throw new Error(`Invalid value: ${value.value}`);
+                if (!this.validate(value.value)) throw new ParseArgTypeError(
+                    `Invalid value: ${value.value}`,
+                    undefined,
+                    undefined,
+                    TYPES.NUMBER,
+                );
                 return Number(value.value);
             default:
                 return super.convert(value, type);
@@ -205,7 +212,21 @@ class IntArgTypeConstructor extends BaseArgTypeConstructor {
         this.name = IntArgTypeConstructor.TYPE;
     }
     validate(value: any, strict?: boolean): boolean {
-        return strict ? typeof value === 'number' && Number.isInteger(value) : !isNaN(value) && Number.isInteger(value);
+        return strict ? typeof value === 'number' && Number.isInteger(value) : !isNaN(value);
+    }
+    convert(value: Token<TokenType>, type: string) {
+        switch (type) {
+            case TYPES.INT:
+                if (!this.validate(value.value)) throw new ParseArgTypeError(
+                    `Invalid value: ${value.value}`,
+                    undefined,
+                    undefined,
+                    TYPES.INT,
+                );
+                return parseInt(value.value.toString());
+            default:
+                return super.convert(value, type);
+        }
     }
 }
 
@@ -248,6 +269,9 @@ class WithKeyValueTypeConstructor<K extends BaseArgType, V extends BaseArgType>
         clone.value = this.value;
         return clone;
     }
+    toString(): string {
+        return `${this.keyTypes.toString()} => ${this.valueTypes.toString()}`;
+    }
 }
 
 class DictArgTypeConstructor<K extends BaseArgType<string> = BaseArgType<string>, V extends BaseArgType = BaseArgType> extends WithKeyValueTypeConstructor<K, V> {
@@ -261,24 +285,24 @@ class DictArgTypeConstructor<K extends BaseArgType<string> = BaseArgType<string>
     }
     parse(state: ParsingProviderState, utils: ParsingProviderUtils, required: boolean, type: TYPES | TYPES[]): BaseArgType {
         let token = state.getCurrentToken();
-        if (!token || token.type !== TokenType.operator || token.value !== '{') throw new Error('Expected {');
+        if (!token || token.type !== TokenType.operator || token.value !== '{') throw new ParseSyntaxError('Expected {');
 
         let dict = new Map();
         let cycle = state.createCycleTracker();
 
         utils.next();
         while (!state.is({ type: TokenType.operator, value: '}' })) {
-            cycle.next(() => { throw new Error('Cycle limit exceeded'); });
-            if (!state.getCurrentToken()) throw new Error('Unexpected end of input');
-            if (state.getCurrentToken()?.type === TokenType.operator) throw new Error('Unexpected operator: ' + state.getCurrentToken()?.value);
+            cycle.next(() => { throw new ParseRuntimeError('Cycle limit exceeded'); });
+            if (!state.getCurrentToken()) throw new ParseSyntaxError('Unexpected end of input');
+            if (state.getCurrentToken()?.type === TokenType.operator) throw new ParseSyntaxError('Unexpected operator: ' + state.getCurrentToken()?.value);
 
             let key = this.keyTypes.clone().parse(state, utils, true, this.keyTypes.name).format();
 
             let token = state.getCurrentToken();
-            if (!state.is({ type: TokenType.operator, value: ':' })) throw new Error('Expected ":", but got: ' + (token || {}).value);
+            if (!state.is({ type: TokenType.operator, value: ':' })) throw new ParseSyntaxError('Expected ":", but got: ' + (token || {}).value);
             utils.next();
 
-            if (state.getCurrentToken()?.type === TokenType.operator) throw new Error('Unexpected operator: ' + state.getCurrentToken()?.value);
+            if (state.getCurrentToken()?.type === TokenType.operator) throw new ParseSyntaxError('Unexpected operator: ' + state.getCurrentToken()?.value);
             let value = this.valueTypes.clone().parse(state, utils, true, this.valueTypes.name).format();
             dict.set(key, value);
 
@@ -288,7 +312,7 @@ class DictArgTypeConstructor<K extends BaseArgType<string> = BaseArgType<string>
             } else if (state.is({ type: TokenType.operator, value: '}' })) {
                 break;
             } else {
-                throw new Error('Expected "," or "}", but got: ' + state.getCurrentToken()?.value);
+                throw new ParseSyntaxError('Expected "," or "}", but got: ' + state.getCurrentToken()?.value);
             }
         }
         utils.next();
@@ -316,13 +340,13 @@ class WithChildTypeConstructor<T extends BaseArgType>
         this.childrenTypes = childrenTypes;
         this.name = WithChildTypeConstructor.TYPE;
     }
-    toString(): string {
-        return `${this.getName()}<${this.childrenTypes.toString()}>`;
-    }
     clone() {
         let clone = new (this.constructor as any)(this.childrenTypes);
         clone.value = this.value;
         return clone;
+    }
+    toString(): string {
+        return `${this.getName()}<${this.childrenTypes.toString()}>`;
     }
 }
 
@@ -335,29 +359,37 @@ class ArrayArgTypeConstructor<T extends BaseArgType> extends WithChildTypeConstr
         this.value = [];
         this.name = ArrayArgTypeConstructor.TYPE;
     }
-    toString() {
-        return `${this.name}<${this.childrenTypes.toString()}>[]`;
-    }
     parse(state: ParsingProviderState, utils: ParsingProviderUtils, required: boolean, type: TYPES | TYPES[]): BaseArgType {
         if (!state.is({ type: TokenType.operator, value: '[' })) throw new Error('Expected "["');
         utils.next();
 
-        let output = [];
+        let output: BaseArgType<any>[] = [];
         let cycle = state.createCycleTracker();
 
+        if (state.is({ type: TokenType.operator, value: ']' })) {
+            utils.next();
+            this.setValue(output);
+            return this;
+        }
+
         while (!state.is({ type: TokenType.operator, value: ']' })) {
-            cycle.next(() => { throw new Error('Cycle limit exceeded'); });
-            if (!state.getCurrentToken()) throw new Error('Unexpected end of input');
-            if (state.getCurrentToken()?.type === TokenType.operator) throw new Error('Unexpected operator: ' + state.getCurrentToken()?.value);
+            cycle.next(() => { throw new ParseRuntimeError('Cycle limit exceeded'); });
+            if (!state.getCurrentToken()) throw new ParseSyntaxError('Unexpected end of input');
+            if (state.getCurrentToken()?.type === TokenType.operator) throw new ParseSyntaxError('Unexpected operator: ' + state.getCurrentToken()?.value);
 
             let vToken = state.getCurrentToken();
-            if (!vToken) throw new Error('Unexpected end of input');
+            if (!vToken) throw new ParseSyntaxError('Unexpected end of input');
             let value;
             if (state.parseConfig.strict) {
                 for (let t of this.childrenTypes) {
                     if (t.validate(vToken.value, true)) {
-                        value = t.clone().parse(state, utils, true, t.name).format();
-                        break;
+                        try {
+                            value = t.clone().parse(state, utils, true, t.name).format();
+                            break;
+                        } catch (e) {
+                            if (state.parseConfig.logErrors) console.error(e);
+                            continue;
+                        }
                     }
                 }
             }
@@ -367,11 +399,12 @@ class ArrayArgTypeConstructor<T extends BaseArgType> extends WithChildTypeConstr
                         value = t.clone().parse(state, utils, true, t.name).format();
                         break;
                     } catch (e) {
+                        if (state.parseConfig.logErrors) console.error(e);
                         continue;
                     }
                 }
             }
-            if (!value) throw new Error('Invalid value: ' + vToken.value);
+            if (!value) throw new ParseSyntaxError('Invalid value: ' + vToken.value);
 
             output.push(value);
 
@@ -382,7 +415,7 @@ class ArrayArgTypeConstructor<T extends BaseArgType> extends WithChildTypeConstr
                 utils.next();
                 break;
             } else {
-                throw new Error('Expected "," or "]", but got: ' + state.getCurrentToken()?.value);
+                throw new ParseSyntaxError('Expected "," or "]", but got: ' + state.getCurrentToken()?.value);
             }
         }
 
@@ -391,6 +424,9 @@ class ArrayArgTypeConstructor<T extends BaseArgType> extends WithChildTypeConstr
     }
     validate(value: any): boolean {
         return Array.isArray(value);
+    }
+    toString(): string {
+        return `${this.name}<(${this.childrenTypes.join("|")})>[]`;
     }
 }
 
@@ -414,17 +450,20 @@ class EnumArgTypeConstructor<T extends Enumable>
     setValue(value: any): void {
         if (!this.validate({
             value
-        })) throw new Error(`Invalid value: ${value.value}`);
+        })) throw new ParseSyntaxError(`Invalid value: ${value.value}`);
         this.value = value;
     }
     convert(value: Token<TokenType>, type: string): any {
         switch (type) {
             case TYPES.ENUM:
-                if (!this.validate(value)) throw new Error(`Invalid value: ${value.value}`);
+                if (!this.validate(value)) throw new ParseArgTypeError(`Invalid value: ${value.value}`);
                 return value.value;
             default:
                 return super.convert(value, type);
         }
+    }
+    toString(): string {
+        return `Enum<${Object.values(this.enums).join("|")}>`;
     }
 }
 

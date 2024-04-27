@@ -4,6 +4,7 @@ import { ArgTypeConstructorMap, BaseArgType, Constructors, TYPES } from "../cons
 import { CycleTracker } from "../utils";
 
 import { ParseError, ParseArgTypeError, ParseRuntimeError, ParseSyntaxError } from "./errors";
+import { LexerProvider, Providers } from "./lexer";
 
 export enum TokenType {
     space = 'space',
@@ -14,7 +15,7 @@ export enum TokenType {
     literal = 'literal',
     unknown = 'unknown',
 }
-type TokenValue = {
+export type TokenValue = {
     'space': string;
     'operator': string;
     'string': string;
@@ -28,55 +29,80 @@ export type Token<T extends TokenType> = {
     value: TokenValue[T];
 }
 
-enum NodeType {
-    root = 'root',
-    command = 'command',
-    arg = 'arg',
-}
-
 export interface ParserConfig {
-    maxCycles: number;
-    overwrites: {
+    maxCycles?: number;
+    overwrites?: {
         [key: string]: string;
     },
-    strict: boolean;
+    strict?: boolean;
+    logErrors?: boolean;
+}
+
+export interface ParsedResult {
+    argOptions: ArgOptions;
+    parsed?: {
+        commandName: string;
+        commandArgs: BaseArgType[];
+    }
+}
+
+export interface CommandParsedResult {
+    name: string;
+    accepted: boolean;
+    result: ParsedResult;
 }
 
 
-class Parser {
+export class Parser {
     static operators = ['(', ')', '[', ']', '{', '}', ':', ','];
     static defaultConfig: ParserConfig = {
         maxCycles: 10000,
         overwrites: {},
         strict: false,
+        logErrors: false,
     }
     commandOptions: CommandOptions;
-    argOptions: ArgOptions[];
+    argOptions: { [key: string]: ArgOptions } = {};
     constructors: Partial<ArgTypeConstructorMap> = {};
+    lexers: LexerProvider[] = [];
     config: ParserConfig;
     constructor(commandOption: CommandOptions, config: Partial<ParserConfig> = Parser.defaultConfig) {
-        this.registerConstructors(Constructors);
+        this.registerConstructor(Constructors);
+        this.registerLexers(Providers);
         this.commandOptions = commandOption;
         this.argOptions = commandOption.args;
         this.config = { ...Parser.defaultConfig, ...config };
     }
-    registerConstructors(constructos: ArgTypeConstructorMap) {
+    registerConstructor(constructos: ArgTypeConstructorMap) {
         Object.assign(this.constructors, constructos);
         return this;
     }
-    fullParse() {
+    registerLexer(lexer: LexerProvider) {
+        this.lexers.push(lexer);
+        return this;
     }
-    _parseArg(tokens: Token<TokenType>[], expected: ArgOptions) {
+    registerLexers(lexers: LexerProvider[]) {
+        this.lexers.push(...lexers);
+        return this;
+    }
+    fullParse(input: string) {
+        return this._parseCommand(this._lexer(input));
+    }
+    _getName(token: Token<TokenType>): string {
+        let name = (new Constructors.STRING()).convert(token, TYPES.STRING);
+        return name;
+    }
+    _parseArg(tokens: Token<TokenType>[], expected: ArgOptions): ParsedResult {
         let _name = tokens.shift(), _this = this;
         if (!_name) {
             throw new Error('No tokens provided');
         }
-        let name = (new Constructors.STRING()).convert(_name, TYPES.STRING);
+        let name = this._getName(_name);
 
         let current = 0, expectedArgs = expected.args, output: BaseArgType[] = [], catchedAll: Token<TokenType>[] = [];
         const state = {
             createCycleTracker(): CycleTracker {
-                return new CycleTracker(_this.config.maxCycles);
+                return new CycleTracker(_this.config.maxCycles!);
             },
             getCurrentToken(): Token<TokenType> | undefined {
                 return tokens[current];
@@ -108,7 +134,7 @@ class Parser {
                 break;
             }
 
-            let type = constructor.construct().parse(state, utils, arg.required, arg.type.constructor.TYPE);
+            let type = constructor.construct().parse(state, utils, !!arg.required, arg.type.constructor.TYPE);
             output.push(type);
         }
         if (!expected.allowExcess && state.getCurrentToken()) {
@@ -122,23 +148,38 @@ class Parser {
         }
 
         return {
-            name,
-            args: output,
-            catchedAll
+            argOptions: expected,
+            parsed: {
+                commandName: name,
+                commandArgs: output,
+            }
         }
     }
-    _parseCommand(tokens: Token<TokenType>[]) {
-        let res = [], options = [...this.argOptions];
-        for (let arg of options) {
+    _parseCommand(tokens: Token<TokenType>[]): {[key: string]: CommandParsedResult} {
+        let res: {[key: string]: CommandParsedResult} ={};
+        for (let [name, arg] of Object.entries(this.argOptions)) {
             try {
-                res.push(this._parseArg([...tokens], arg));
+                res[name] = {
+                    name,
+                    accepted: true,
+                    result: this._parseArg([...tokens], {
+                        ...arg,
+                        args: [...arg.args.map((a) => ({ ...a }))],
+                    })
+                };
             } catch (e) {
+                if (this.config.logErrors) console.error(e);
+                res[name] = {
+                    name,
+                    accepted: false,
+                    result: {
+                        argOptions: arg,
+                    }
+                };
                 continue;
             }
         }
         return res;
-    }
-    _parse(input: string) {
     }
     _lexer(input: string) {
         const _this = this;
@@ -150,6 +191,9 @@ class Parser {
             validIntegerOnly: new RegExp("[0-9]"),
             validNumberOnly: new RegExp("[0-9.]"),
             validLetterOnly: new RegExp("[a-zA-Z\u4e00-\u9fa5\u0100-\u017F_]"),
+            getCurrent(): number {
+                return current;
+            },
             getCurrentToken() {
                 return input[current];
             },
@@ -186,7 +230,7 @@ class Parser {
                 return i;
             },
             createCycleTracker(): CycleTracker {
-                return new CycleTracker(_this.config.maxCycles);
+                return new CycleTracker(_this.config.maxCycles!);
             },
             ...(_this.config.overwrites || {})
         }
@@ -201,7 +245,7 @@ class Parser {
                 if (skip) utils.next();
                 return utils;
             },
-            flowString(endString?: string | undefined, maxLength = Infinity) {
+            flowString(endString?: string | undefined, maxLength = Infinity): string {
                 let value: string[] = [];
                 while (current < input.length && value.length < maxLength) {
                     let char = state.getCurrentToken();
@@ -226,7 +270,7 @@ class Parser {
         }
 
         let _cycleTracker = state.createCycleTracker();
-        while (current < input.length) {
+        _: while (current < input.length) {
             _cycleTracker.next(() => console.log(`Cycle limit exceeded: ${input.slice(current - 10, current + 10)}\n current index: ${current}`));
 
             let char: string = state.getCurrentToken();
@@ -234,57 +278,16 @@ class Parser {
                 utils.next();
                 continue;
             }
-
-            // operator
             if (Parser.operators.includes(char)) {
                 utils.createToken<TokenType.operator>({ type: TokenType.operator, value: char })
                     .next();
                 continue;
             }
-
-            // string
-            if (char === "\"") {
-                utils.next();
-                utils.createToken<TokenType.string>({
-                    type: TokenType.string,
-                    value: utils.flowString("\"")
-                });
-                utils.next();
-                continue;
-            }
-
-            // number
-            if (state.validNumberOnly.test(char) && state.isNumber()) {
-                let value: string[] = [];
-                let decimalFound: boolean = false;
-                while (char && new RegExp(/\d/).test(char) || char === '.') {
-                    if (char === '.') {
-                        if (decimalFound) {
-                            throw state.tracked(ParseError, 'Mixed Content: Unexpected decimal point');
-                        }
-                        decimalFound = true;
-                    }
-                    value.push(char);
-                    utils.next();
-                    char = state.getCurrentToken();
-                }
-                utils.createToken<TokenType.number>({ type: TokenType.number, value: parseFloat(value.join('')) });
-                continue;
-            }
-
-            // boolean
-            if (char === 't' || char === 'f') {
-                let nextOp = state.getNextNonContentChar();
-                let distance = nextOp - current;
-                let v = state.getNextTokens(current, distance).join('');
-                if (v === 'true' || v === 'false') {
-                    utils.createToken<TokenType.boolean>({ type: TokenType.boolean, value: v === 'true' })
-                        .next(distance);
-                    continue;
+            for (let provider of this.lexers) {
+                if (provider.condition(state, utils) && provider.trigger(state, utils)) {
+                    continue _;
                 }
             }
-
-            // literal
             if (state.validChar.test(char)) {
                 utils.createToken<TokenType.literal>({
                     type: TokenType.literal,
@@ -298,56 +301,92 @@ class Parser {
 
         return tokens;
     }
+    help() {
+        let poly = Object.entries(this.commandOptions.args).map(([_, arg]) => {
+            let _if = <T>(...args: [c: any, v: T][]): T[] => args.filter(([c, _v]) => c).map(([_c, v]) => v);
+            let _insert = (s: string, a: string[]) => a.join(s);
+            let _toPerfix = (perfix: string[][]) => [perfix.map(v => v[0]).join(""), perfix.map(v => v[1]).join("")];
+            console.log(this.commandOptions)
+            let args = arg.args.map((a) => {
+                let content = `${a.name}: ${a.type.construct().toString()}`;
+                let perfix = _if<string[]>(
+                    [a.required, ["<", ">"]],
+                    [!a.required, ["[", "]"]],
+                );
+                return _insert(
+                    content,
+                    _toPerfix(perfix)
+                );
+            }).join(' ');
+            return _insert(
+                `${this.commandOptions.head || "/"}${this.commandOptions.name} ${args}`,
+                _toPerfix(_if<string[]>(
+                    [arg.catchAll && arg.allowExcess, ["", " ..."]]
+                ))
+            );
+        });
+        return poly.join("\n");
+    }
 }
 
 let p = new Parser({
     head: "/",
     name: "test",
     description: "test",
-    args: [{
-        args: [{
-            name: "name",
-            required: true,
-            type: Types.STRING,
-        },{
-            name: "name2",
-            required: true,
-            type: Types.NUMBER,
-        }, {
-            name: "enum",
-            required: true,
-            type: Types.ENUM({
-                a: "A",
-                b: "B"
-            })
-        }, {
-            name: "array",
-            required: true,
-            type: Types.ARRAY(Types.STRING)
-        }, {
-            name: "dict",
-            required: true,
-            type: Types.DICT(Types.STRING, Types.STRING)
-        }, {
-            name: "array",
-            required: true,
-            type: Types.ARRAY(Types.NUMBER)
-        }, {
-            name: "array",
-            required: true,
-            type: Types.ARRAY(Types.NUMBER, Types.STRING, Types.BOOLEAN)
-        }],
-        catchAll: true,
-        allowExcess: true,
-    }],
+    args: {
+        "a": {
+            args: [{
+                name: "name",
+                required: true,
+                type: Types.STRING,
+            }, {
+                name: "name2",
+                required: true,
+                type: Types.INT,
+            }, {
+                name: "enum",
+                required: true,
+                type: Types.ENUM({
+                    a: "A",
+                    b: "B"
+                })
+            }, {
+                name: "dict",
+                required: true,
+                type: Types.DICT(Types.STRING, Types.STRING)
+            }, {
+                name: "array",
+                required: false,
+                type: Types.ARRAY(Types.NUMBER, Types.STRING, Types.BOOLEAN)
+            }],
+            catchAll: true,
+            allowExcess: true,
+        },
+        "b": {
+            args: [{
+                name: "name",
+                required: true,
+                type: Types.STRING,
+            }, {
+                name: "name2",
+                required: true,
+                type: Types.STRING,
+            }],
+            catchAll: false,
+            allowExcess: false,
+        }
+    },
+}, {
+    logErrors: true,
+    strict: false
 });
 
-let t = `/test nameeee "123" A [1,"2",3] {"qwq": 123} [1,"2", true] [1,"2", false, true] false true`
+let t = `/test nameeee 123.3 A {"qwq": 123} [1,2,"3"]`;
 let r = p._parseCommand(p._lexer(t));
 console.log(
     p._lexer(t),
     JSON.stringify(r, null, 4),
-    r[0]?.args?.[r[0].args.length - 1]?.value.entries()
-)
+);
+console.log(p.help())
 
 
