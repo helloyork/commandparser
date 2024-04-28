@@ -5,12 +5,6 @@ import { ArgTypeConstructor, BaseArgType, BaseArgTypeConstructor, TYPES, ArgType
 import { Types } from "./Types";
 import { CommandParsedResult, Parser, ParserConfig } from "./parser/parser";
 
-// -----------
-// |         |
-// |         |
-// |         |
-// -----------
-
 export type ArgType = {
     construct: () => ArgTypeConstructors,
     constructor: ArgTypeConstructor,
@@ -24,7 +18,7 @@ export interface Arg {
 }
 
 export interface ArgOptions {
-    args: Arg[];
+    args: (Arg | ArgType)[];
     catchAll?: boolean;
     allowExcess?: boolean;
 }
@@ -38,22 +32,28 @@ export interface CommandOptions {
 }
 
 export interface CommandResult {
-    name: string;
-    result: CommandParsedResult;
+    name: string | undefined;
+    result: { [key: string]: CommandParsedResult } | undefined;
 }
+
+const ArgTypeSchema = z.object({
+    construct: z.function(),
+    constructor: z.function(),
+});
 
 const ArgSchema = z.object({
     name: z.string(),
     description: z.string().optional(),
     required: z.boolean().optional(),
-    type: z.instanceof(BaseArgType),
+    type: ArgTypeSchema,
     onRequestCompletion: z.function().optional(),
 });
 
 const ArgOptionsSchema = z.object({
-    args: z.array(ArgSchema),
+    args: z.array(ArgSchema).or(z.array(ArgTypeSchema)),
     catchAll: z.boolean().optional(),
     allowExcess: z.boolean().optional(),
+    q: z.boolean()
 });
 
 const CommandOptionsSchema = z.object({
@@ -65,24 +65,27 @@ const CommandOptionsSchema = z.object({
 
 type CommandOptionConfig = { [key: string]: CommandOptions };
 
-class Options {
+export class Options {
     static Types = Types;
     commands: CommandOptionConfig;
+    typeSchema: z.ZodSchema;
     constructor(commands: CommandOptionConfig) {
         this.commands = commands;
+        this.typeSchema = CommandOptionsSchema;
         this.validateConfig();
     }
     validateConfig() {
         Object.keys(this.commands).forEach((key) => {
-            CommandOptionsSchema.parse(this.commands[key]);
+            this.typeSchema.parse(this.commands[key]);
         });
         return this;
     }
 }
 
-class CommandParser {
+export default class CommandParser {
+    static __lib = { z, ArgTypeSchema, ArgSchema, ArgOptionsSchema, CommandOptionsSchema };
     options: Options;
-    parsers: {[key: string]: Parser} = {};
+    parsers: { [key: string]: Parser } = {};
     parserConfig: ParserConfig;
     constructor({
         commands,
@@ -97,18 +100,21 @@ class CommandParser {
             this.options = new Options(commands);
         }
         this.parserConfig = parserConfig || {};
+        this._configParser();
     }
     private _configParser() {
         Object.keys(this.options.commands).forEach((key) => {
             this.parsers[key] = new Parser(this.options.commands[key], this.parserConfig);
         });
+        return this;
     }
     parse(input: string): CommandResult {
         let [name, parser] = Object.entries(this.parsers).find(([key, parser]) => {
             return parser._getName(parser._lexer(input)[0]) === key
-        })?.[0] || [];
+        }) || [];
         return {
-
+            name,
+            result: parser ? parser.fullParse(input) : undefined,
         }
     }
 }

@@ -1,5 +1,5 @@
 import { Types } from "../Types";
-import { ArgOptions, CommandOptions } from "../command";
+import { Arg, ArgOptions, ArgType, CommandOptions } from "../command";
 import { ArgTypeConstructorMap, BaseArgType, Constructors, TYPES } from "../constructors";
 import { CycleTracker } from "../utils";
 
@@ -61,6 +61,10 @@ export class Parser {
         strict: false,
         logErrors: false,
     }
+    static defaultArg: Omit<Arg, "type"> = {
+        name: 'arg',
+        required: true
+    }
     commandOptions: CommandOptions;
     argOptions: { [key: string]: ArgOptions } = {};
     constructors: Partial<ArgTypeConstructorMap> = {};
@@ -91,6 +95,12 @@ export class Parser {
     _getName(token: Token<TokenType>): string {
         let name = (new Constructors.STRING()).convert(token, TYPES.STRING);
         return name;
+    }
+    _acronymsToArg (input: Arg | ArgType): Arg {
+        return {
+            ...(("name" in input) ? input : Parser.defaultArg),
+            type: ("name" in input) ? input.type : input
+        }
     }
     _parseArg(tokens: Token<TokenType>[], expected: ArgOptions): ParsedResult {
         let _name = tokens.shift(), _this = this;
@@ -128,7 +138,9 @@ export class Parser {
         while (expectedArgs.length) {
             _cycleTracker.next(() => console.log(`Cycle limit exceeded: ${tokens.slice(current - 5, current + 5)}\n current index: ${current}`));
 
-            let arg = expectedArgs.shift()!, constructor = arg?.type || Constructors.STRING;
+            let _arg = expectedArgs.shift()!;
+            let arg: Arg = this._acronymsToArg(_arg);
+            let constructor = arg.type || Constructors.STRING;
             if (!state.getCurrentToken()) {
                 if (arg.required) throw new ParseArgTypeError('Missing required argument', current, arg.name, arg.type.constructor.TYPE, 'undefined');
                 break;
@@ -155,8 +167,8 @@ export class Parser {
             }
         }
     }
-    _parseCommand(tokens: Token<TokenType>[]): {[key: string]: CommandParsedResult} {
-        let res: {[key: string]: CommandParsedResult} ={};
+    _parseCommand(tokens: Token<TokenType>[]): { [key: string]: CommandParsedResult } {
+        let res: { [key: string]: CommandParsedResult } = {};
         for (let [name, arg] of Object.entries(this.argOptions)) {
             try {
                 res[name] = {
@@ -164,7 +176,7 @@ export class Parser {
                     accepted: true,
                     result: this._parseArg([...tokens], {
                         ...arg,
-                        args: [...arg.args.map((a) => ({ ...a }))],
+                        args: [...arg.args.map((a) => ({ ...this._acronymsToArg(a) }))],
                     })
                 };
             } catch (e) {
@@ -308,10 +320,11 @@ export class Parser {
             let _toPerfix = (perfix: string[][]) => [perfix.map(v => v[0]).join(""), perfix.map(v => v[1]).join("")];
             console.log(this.commandOptions)
             let args = arg.args.map((a) => {
-                let content = `${a.name}: ${a.type.construct().toString()}`;
+                let arg = this._acronymsToArg(a);
+                let content = `${arg.name}: ${arg.type.construct().toString()}`;
                 let perfix = _if<string[]>(
-                    [a.required, ["<", ">"]],
-                    [!a.required, ["[", "]"]],
+                    [arg.required, ["<", ">"]],
+                    [!arg.required, ["[", "]"]],
                 );
                 return _insert(
                     content,
@@ -329,64 +342,64 @@ export class Parser {
     }
 }
 
-let p = new Parser({
-    head: "/",
-    name: "test",
-    description: "test",
-    args: {
-        "a": {
-            args: [{
-                name: "name",
-                required: true,
-                type: Types.STRING,
-            }, {
-                name: "name2",
-                required: true,
-                type: Types.INT,
-            }, {
-                name: "enum",
-                required: true,
-                type: Types.ENUM({
-                    a: "A",
-                    b: "B"
-                })
-            }, {
-                name: "dict",
-                required: true,
-                type: Types.DICT(Types.STRING, Types.STRING)
-            }, {
-                name: "array",
-                required: false,
-                type: Types.ARRAY(Types.NUMBER, Types.STRING, Types.BOOLEAN)
-            }],
-            catchAll: true,
-            allowExcess: true,
-        },
-        "b": {
-            args: [{
-                name: "name",
-                required: true,
-                type: Types.STRING,
-            }, {
-                name: "name2",
-                required: true,
-                type: Types.STRING,
-            }],
-            catchAll: false,
-            allowExcess: false,
-        }
-    },
-}, {
-    logErrors: true,
-    strict: false
-});
+// let p = new Parser({
+//     head: "/",
+//     name: "test",
+//     description: "test",
+//     args: {
+//         "a": {
+//             args: [{
+//                 name: "name",
+//                 required: true,
+//                 type: Types.STRING,
+//             }, {
+//                 name: "name2",
+//                 required: true,
+//                 type: Types.INT,
+//             }, {
+//                 name: "enum",
+//                 required: true,
+//                 type: Types.ENUM({
+//                     a: "A",
+//                     b: "B"
+//                 })
+//             }, {
+//                 name: "dict",
+//                 required: true,
+//                 type: Types.DICT(Types.STRING, Types.STRING)
+//             }, {
+//                 name: "array",
+//                 required: false,
+//                 type: Types.ARRAY(Types.NUMBER, Types.STRING, Types.BOOLEAN)
+//             }],
+//             catchAll: true,
+//             allowExcess: true,
+//         },
+//         "b": {
+//             args: [{
+//                 name: "name",
+//                 required: true,
+//                 type: Types.STRING,
+//             }, {
+//                 name: "name2",
+//                 required: true,
+//                 type: Types.STRING,
+//             }],
+//             catchAll: false,
+//             allowExcess: false,
+//         }
+//     },
+// }, {
+//     logErrors: true,
+//     strict: false
+// });
 
-let t = `/test nameeee 123.3 A {"qwq": 123} [1,2,"3"]`;
-let r = p._parseCommand(p._lexer(t));
-console.log(
-    p._lexer(t),
-    JSON.stringify(r, null, 4),
-);
-console.log(p.help())
+// let t = `/test nameeee 123.3 A {"qwq": 123} [1,2,"3"]`;
+// let r = p._parseCommand(p._lexer(t));
+// console.log(
+//     p._lexer(t),
+//     JSON.stringify(r, null, 4),
+// );
+// console.log(p.help())
 
 
