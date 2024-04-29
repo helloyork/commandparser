@@ -5,14 +5,14 @@
 
 ### using npm
 
-> `npm install commandparser`
+> `npm install @helloyork/commandparser`
 
 ## How to use
 
 import package
 
 ```javascript
-const { Options, Types, default: CommandParser } = require("commandparser");
+const { Options, Types, default: CommandParser } = require("@helloyork/commandparser");
 ```
 
 create a command parser
