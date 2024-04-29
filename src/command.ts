@@ -53,7 +53,6 @@ const ArgOptionsSchema = z.object({
     args: z.array(ArgSchema).or(z.array(ArgTypeSchema)),
     catchAll: z.boolean().optional(),
     allowExcess: z.boolean().optional(),
-    q: z.boolean()
 });
 
 const CommandOptionsSchema = z.object({

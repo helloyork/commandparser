@@ -2,14 +2,16 @@
   "name": "commandparser",
   "version": "0.1.0",
   "description": "",
-  "main": "index.js",
+  "main": "./src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node ./test/3.js"
   },
-  "author": "",
+  "author": "helloyork@icloud.com",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.12.7",
+    "@typescript-eslint/eslint-plugin": "^7.7.1",
+    "@typescript-eslint/parser": "^7.7.1",
     "tslib": "^2.6.2",
     "typescript": "^5.4.5"
   },

@@ -43,6 +43,7 @@ export interface ParsedResult {
     parsed?: {
         commandName: string;
         commandArgs: BaseArgType[];
+        catchedAll: Token<TokenType>[];
     }
 }
 
@@ -140,7 +141,7 @@ export class Parser {
 
             let _arg = expectedArgs.shift()!;
             let arg: Arg = this._acronymsToArg(_arg);
-            let constructor = arg.type || Constructors.STRING;
+            let constructor = arg.type;
             if (!state.getCurrentToken()) {
                 if (arg.required) throw new ParseArgTypeError('Missing required argument', current, arg.name, arg.type.constructor.TYPE, 'undefined');
                 break;
@@ -164,6 +165,7 @@ export class Parser {
             parsed: {
                 commandName: name,
                 commandArgs: output,
+                catchedAll
             }
         }
     }

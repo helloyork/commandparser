@@ -428,6 +428,9 @@ class ArrayArgTypeConstructor<T extends BaseArgType> extends WithChildTypeConstr
     toString(): string {
         return `${this.name}<(${this.childrenTypes.join("|")})>[]`;
     }
+    map(callbackfn: (value: T, index: number, array: T[]) => any): any {
+        return this.getValue().map(callbackfn);
+    }
 }
 
 
