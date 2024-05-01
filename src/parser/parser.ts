@@ -39,6 +39,7 @@ export interface ParserConfig {
 }
 
 export interface ParsedResult {
+    error?: Error;
     argOptions: ArgOptions;
     parsed?: {
         commandName: string;
@@ -190,6 +191,7 @@ export class Parser {
                     name,
                     accepted: false,
                     result: {
+                        error: e instanceof Error ? e : new ParseRuntimeError(String(e)),
                         argOptions: arg,
                     }
                 };
