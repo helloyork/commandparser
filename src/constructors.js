@@ -83,6 +83,12 @@ var BaseArgTypeConstructor = /** @class */ (function () {
     BaseArgTypeConstructor.prototype.validate = function (value) {
         return true;
     };
+    BaseArgTypeConstructor.prototype.toData = function () {
+        return this.convert({
+            type: parser_1.TokenType.unknown,
+            value: this.getValue()
+        }, this.getName());
+    };
     BaseArgTypeConstructor.prototype.setValue = function (value) {
         if (!this.validate(value))
             throw new errors_1.ParseArgTypeError("Invalid value: ".concat(value, ", expected: ").concat(this.name));

@@ -1,7 +1,6 @@
 "use strict";
 /**
  * @todo add prediction
- * @todo custom data types
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Types = exports.Options = void 0;

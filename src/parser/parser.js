@@ -41,15 +41,18 @@ var Parser = /** @class */ (function () {
         this.argOptions = {};
         this.constructors = {};
         this.lexers = [];
-        this.registerConstructor(constructors_1.Constructors);
+        this.registerConstructorMap(constructors_1.Constructors);
         this.registerLexers(lexer_1.Providers);
         this.commandOptions = commandOption;
         this.argOptions = commandOption.args;
         this.config = __assign(__assign({}, Parser.defaultConfig), config);
     }
-    Parser.prototype.registerConstructor = function (constructos) {
+    Parser.prototype.registerConstructorMap = function (constructos) {
         Object.assign(this.constructors, constructos);
         return this;
+    };
+    Parser.prototype.registerConstructor = function (name, constructor) {
+        this.constructors[name] = constructor;
     };
     Parser.prototype.registerLexer = function (lexer) {
         this.lexers.push(lexer);
@@ -65,7 +68,7 @@ var Parser = /** @class */ (function () {
     };
     Parser.prototype._getName = function (token) {
         var name = (new constructors_1.Constructors.STRING()).convert(token, constructors_1.TYPES.STRING);
-        return name;
+        return String(name);
     };
     Parser.prototype._acronymsToArg = function (input) {
         return __assign(__assign({}, (("name" in input) ? input : Parser.defaultArg)), { type: ("name" in input) ? input.type : input });

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ArgTypeConstructor, BaseArgType, BaseArgTypeConstructor, TYPES, ArgType as IArgType, ArgTypeConstructors } from "./constructors";
 import { Types } from "./Types";
 import { CommandParsedResult, Parser, ParserConfig } from "./parser/parser";
+import { LexerProvider } from "./parser/lexer";
 
 export type ArgType = {
     construct: () => ArgTypeConstructors,
@@ -107,7 +108,7 @@ export default class CommandParser {
         });
         return this;
     }
-    parse(input: string): CommandResult {
+    public parse(input: string): CommandResult {
         let [name, parser] = Object.entries(this.parsers).find(([key, parser]) => {
             return parser._getName(parser._lexer(input)[0]) === key
         }) || [];
@@ -115,6 +116,12 @@ export default class CommandParser {
             name,
             result: parser ? parser.fullParse(input) : undefined,
         }
+    }
+    registerLexer(lexer: LexerProvider) {
+        Object.values(this.parsers).forEach(p => p.registerLexer(lexer));
+    }
+    registerType<T extends typeof BaseArgType>(type: T) {
+        Object.values(this.parsers).forEach(p => p.registerConstructor(type.name, type));
     }
 }
 

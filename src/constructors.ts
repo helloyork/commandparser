@@ -28,6 +28,7 @@ export declare class BaseArgType<T = any> {
     format(): BaseArgType<T>;
     public setValue(value: T): void;
     public getValue(): T;
+    public toData<T>(): any;
     public validate(value: any, scrict?: boolean): boolean;
     public convert(value: Token<TokenType>, type: string): any;
 }
@@ -85,6 +86,8 @@ export enum TYPES {
     _WITH_CHILD_TYPE = 'withChildType',
 }
 
+type ConvertedBaseArgType = string | number | boolean;
+
 /* Base Arg Type */
 export class BaseArgTypeConstructor implements BaseArgType {
     static TYPE = TYPES._BASE;
@@ -114,7 +117,7 @@ export class BaseArgTypeConstructor implements BaseArgType {
         utils.next();
         return this;
     }
-    convert(value: Token<TokenType>, type: string): any {
+    convert(value: Token<TokenType>, type: string): ConvertedBaseArgType {
         switch (type) {
             case TYPES.STRING:
                 return String(value.value);
@@ -132,6 +135,12 @@ export class BaseArgTypeConstructor implements BaseArgType {
     }
     validate(value: any): boolean {
         return true;
+    }
+    public toData(): any {
+        return this.convert({
+            type: TokenType.unknown,
+            value: this.getValue()
+        }, this.getName());
     }
     setValue(value: any) {
         if (!this.validate(value)) throw new ParseArgTypeError(`Invalid value: ${value}, expected: ${this.name}`);
@@ -176,7 +185,7 @@ class NumberArgTypeConstructor extends BaseArgTypeConstructor {
     validate(value: any, strict?: boolean): boolean {
         return strict ? typeof value === "number" : !isNaN(value);
     }
-    convert(value: Token<TokenType>, type: string) {
+    convert(value: Token<TokenType>, type: string): number | ConvertedBaseArgType {
         switch (type) {
             case TYPES.NUMBER:
                 if (!this.validate(value.value)) throw new ParseArgTypeError(
@@ -214,7 +223,7 @@ class IntArgTypeConstructor extends BaseArgTypeConstructor {
     validate(value: any, strict?: boolean): boolean {
         return strict ? typeof value === 'number' && Number.isInteger(value) : !isNaN(value);
     }
-    convert(value: Token<TokenType>, type: string) {
+    convert(value: Token<TokenType>, type: string): number | ConvertedBaseArgType {
         switch (type) {
             case TYPES.INT:
                 if (!this.validate(value.value)) throw new ParseArgTypeError(
@@ -240,7 +249,7 @@ class BooleanArgTypeConstructor extends BaseArgTypeConstructor {
     validate(value: any, strict?: boolean): boolean {
         return strict ? value === true || value === false : typeof value === 'boolean';
     }
-    convert(value: Token<TokenType>, type: string) {
+    convert(value: Token<TokenType>, type: string): boolean {
         return Boolean(value.value);
     }
 }

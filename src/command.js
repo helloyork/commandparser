@@ -73,6 +73,12 @@ var CommandParser = /** @class */ (function () {
             result: parser ? parser.fullParse(input) : undefined,
         };
     };
+    CommandParser.prototype.registerLexer = function (lexer) {
+        Object.values(this.parsers).forEach(function (p) { return p.registerLexer(lexer); });
+    };
+    CommandParser.prototype.registerType = function (type) {
+        Object.values(this.parsers).forEach(function (p) { return p.registerConstructor(type.name, type); });
+    };
     CommandParser.__lib = { z: zod_1.z, ArgTypeSchema: ArgTypeSchema, ArgSchema: ArgSchema, ArgOptionsSchema: ArgOptionsSchema, CommandOptionsSchema: CommandOptionsSchema };
     return CommandParser;
 }());

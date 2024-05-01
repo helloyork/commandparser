@@ -1,6 +1,6 @@
 import { Types } from "../Types";
 import { Arg, ArgOptions, ArgType, CommandOptions } from "../command";
-import { ArgTypeConstructorMap, BaseArgType, Constructors, TYPES } from "../constructors";
+import { ArgTypeConstructorMap, BaseArgType, BaseArgTypeConstructor, Constructors, TYPES } from "../constructors";
 import { CycleTracker } from "../utils";
 
 import { ParseError, ParseArgTypeError, ParseRuntimeError, ParseSyntaxError } from "./errors";
@@ -68,19 +68,22 @@ export class Parser {
     }
     commandOptions: CommandOptions;
     argOptions: { [key: string]: ArgOptions } = {};
-    constructors: Partial<ArgTypeConstructorMap> = {};
+    constructors: {[key: string]: typeof BaseArgType} = {};
     lexers: LexerProvider[] = [];
     config: ParserConfig;
     constructor(commandOption: CommandOptions, config: Partial<ParserConfig> = Parser.defaultConfig) {
-        this.registerConstructor(Constructors);
+        this.registerConstructorMap(Constructors);
         this.registerLexers(Providers);
         this.commandOptions = commandOption;
         this.argOptions = commandOption.args;
         this.config = { ...Parser.defaultConfig, ...config };
     }
-    registerConstructor(constructos: ArgTypeConstructorMap) {
+    registerConstructorMap(constructos: ArgTypeConstructorMap) {
         Object.assign(this.constructors, constructos);
         return this;
+    }
+    registerConstructor(name: string, constructor: typeof BaseArgType) {
+        this.constructors[name] = constructor;
     }
     registerLexer(lexer: LexerProvider) {
         this.lexers.push(lexer);
@@ -95,7 +98,7 @@ export class Parser {
     }
     _getName(token: Token<TokenType>): string {
         let name = (new Constructors.STRING()).convert(token, TYPES.STRING);
-        return name;
+        return String(name);
     }
     _acronymsToArg (input: Arg | ArgType): Arg {
         return {
